@@ -16,6 +16,7 @@
 #
 
 set -e  # Exit on error
+set -o pipefail  # Exit on pipeline errors
 
 # ==============================================================================
 # STEP 0: Check if required tools are installed
@@ -159,16 +160,15 @@ echo "=== Step 5: Running ADMIXTURE analysis ==="
 # We run K values from 3 to 5.
 
 # Change to output directory for ADMIXTURE (it outputs to current directory)
-cd "$OUTPUT_DIR"
-
-for K in 3 4 5; do
-    echo "Running ADMIXTURE with K=$K..."
-    admixture chr22_pruned.bed "$K"
-    echo "ADMIXTURE K=$K complete."
-done
-
-# Return to original directory
-cd ..
+# Using a subshell to avoid affecting the main script's working directory
+(
+    cd "$OUTPUT_DIR"
+    for K in 3 4 5; do
+        echo "Running ADMIXTURE with K=$K..."
+        admixture chr22_pruned.bed "$K"
+        echo "ADMIXTURE K=$K complete."
+    done
+)
 
 echo "ADMIXTURE analysis complete for K=3, 4, 5."
 echo "Results saved to:"
@@ -192,6 +192,13 @@ echo "=== Step 6: Converting metadata panel to PLINK cluster format ==="
 # we need to match that format.
 
 awk 'NR>1 {print "0", $1, $2}' "$PANEL_FILE" > "$OUTPUT_DIR/clusters.txt"
+
+# Validate that the cluster file was created successfully
+if [ ! -s "$OUTPUT_DIR/clusters.txt" ]; then
+    echo "ERROR: Failed to create cluster file or file is empty."
+    echo "Please check the panel file format."
+    exit 1
+fi
 
 echo "Cluster file created: $OUTPUT_DIR/clusters.txt"
 echo ""
