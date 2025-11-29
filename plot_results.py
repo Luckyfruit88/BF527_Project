@@ -23,9 +23,23 @@ Requirements:
 """
 
 import os
+import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+
+# Define super population colors as a constant
+SUPER_POP_COLORS = {
+    'AFR': '#E41A1C',  # Red
+    'EUR': '#377EB8',  # Blue
+    'EAS': '#4DAF4A',  # Green
+    'AMR': '#984EA3',  # Purple
+    'SAS': '#FF7F00'   # Orange
+}
+
+# Ancestry colors for ADMIXTURE plots (reuse from super pop colors)
+ANCESTRY_COLORS = list(SUPER_POP_COLORS.values())
 
 
 def load_metadata(panel_file):
@@ -126,25 +140,16 @@ def plot_pca(pca_data, metadata, output_file):
         how='left'
     )
     
-    # Define colors for super populations
-    super_pop_colors = {
-        'AFR': '#E41A1C',  # Red
-        'EUR': '#377EB8',  # Blue
-        'EAS': '#4DAF4A',  # Green
-        'AMR': '#984EA3',  # Purple
-        'SAS': '#FF7F00'   # Orange
-    }
-    
     # Create figure
     plt.figure(figsize=(10, 8))
     
-    # Plot each super population
-    for super_pop in ['AFR', 'EUR', 'EAS', 'AMR', 'SAS']:
+    # Plot each super population using the constant color dictionary
+    for super_pop in SUPER_POP_COLORS:
         subset = merged[merged['super_pop'] == super_pop]
         plt.scatter(
             subset['PC1'],
             subset['PC2'],
-            c=super_pop_colors[super_pop],
+            c=SUPER_POP_COLORS[super_pop],
             label=super_pop,
             alpha=0.7,
             s=20
@@ -186,9 +191,6 @@ def plot_admixture(q_data, metadata, output_file):
     # Get ancestry columns
     k_columns = [col for col in merged.columns if col.startswith('K')]
     
-    # Define colors for ancestry components
-    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
-    
     # Create figure
     fig, ax = plt.subplots(figsize=(20, 6))
     
@@ -202,7 +204,7 @@ def plot_admixture(q_data, metadata, output_file):
             x,
             merged[k_col],
             bottom=bottom,
-            color=colors[i % len(colors)],
+            color=ANCESTRY_COLORS[i % len(ANCESTRY_COLORS)],
             width=1.0,
             label=f'Ancestry {i+1}'
         )
@@ -264,19 +266,19 @@ def main():
     # Check if input files exist
     if not os.path.exists(panel_file):
         print(f"ERROR: Panel file not found: {panel_file}")
-        return 1
+        sys.exit(1)
     
     if not os.path.exists(eigenvec_file):
         print(f"ERROR: PCA eigenvec file not found: {eigenvec_file}")
-        return 1
+        sys.exit(1)
     
     if not os.path.exists(q_file):
         print(f"ERROR: ADMIXTURE Q file not found: {q_file}")
-        return 1
+        sys.exit(1)
     
     if not os.path.exists(fam_file):
         print(f"ERROR: FAM file not found: {fam_file}")
-        return 1
+        sys.exit(1)
     
     print("Loading data files...")
     
@@ -297,8 +299,7 @@ def main():
     plot_admixture(q_data, metadata, admixture_output)
     
     print("\nVisualization complete!")
-    return 0
 
 
 if __name__ == '__main__':
-    exit(main())
+    main()
