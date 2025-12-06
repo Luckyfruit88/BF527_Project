@@ -1,203 +1,636 @@
 #!/usr/bin/env python3
 """
-plot_fst_table.py
-Generate a visual table/figure for Pairwise FST results
+plot_fst_table.py — FST Analysis & Visualization Suite
+
+This script dynamically reads pairwise FST results from the pipeline and generates:
+1. Super-population FST heatmap (5x5)
+2. Sub-population FST heatmap (26x26)
+3. Population Branch Statistic (PBS) for detecting recent positive selection
+4. FST distribution plots
+
+All data is read from pipeline outputs - NO HARDCODING.
 """
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import os
+import sys
+import warnings
+from pathlib import Path
+from itertools import combinations
+
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.cluster.hierarchy import linkage, dendrogram
 
-def create_fst_table_figure():
-    """Create a formatted table figure for FST results."""
-    
-    # FST data
-    data = {
-        'Comparison': ['AFR vs EUR', 'AFR vs EAS', 'EUR vs EAS', 'EUR vs SAS', 'EAS vs AMR', 'EUR vs EUR'],
-        'Pop 1': ['YRI\n(Nigeria)', 'YRI\n(Nigeria)', 'CEU\n(N. Europe)', 'CEU\n(N. Europe)', 'CHB\n(Beijing)', 'CEU\n(N. Europe)'],
-        'Pop 2': ['CEU\n(N. Europe)', 'CHB\n(Beijing)', 'CHB\n(Beijing)', 'GIH\n(Gujarat)', 'MXL\n(Mexico)', 'GBR\n(Britain)'],
-        'FST': [0.154234, 0.194096, 0.112626, 0.036751, 0.081262, 0.000099],
-        'Level': ['High', 'Highest', 'Moderate-High', 'Moderate', 'Moderate', 'Very Low']
-    }
-    
-    df = pd.DataFrame(data)
-    
-    # Create figure with two subplots
-    fig = plt.figure(figsize=(14, 10))
-    
-    # =========================================================================
-    # Subplot 1: Table
-    # =========================================================================
-    ax1 = fig.add_subplot(2, 1, 1)
-    ax1.axis('off')
-    
-    # Title
-    ax1.set_title('Pairwise FST Analysis Results\n1000 Genomes Project - Chromosome 22', 
-                  fontsize=16, fontweight='bold', pad=20)
-    
-    # Create table data
-    table_data = []
-    for i, row in df.iterrows():
-        table_data.append([
-            row['Comparison'],
-            row['Pop 1'].replace('\n', ' '),
-            row['Pop 2'].replace('\n', ' '),
-            f"{row['FST']:.6f}",
-            row['Level']
-        ])
-    
-    # Column headers
-    columns = ['Comparison', 'Population 1', 'Population 2', 'Weighted FST', 'Differentiation']
-    
-    # Create table
-    table = ax1.table(
-        cellText=table_data,
-        colLabels=columns,
-        loc='center',
-        cellLoc='center',
-        colWidths=[0.15, 0.20, 0.20, 0.15, 0.18]
-    )
-    
-    # Style the table
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1.2, 2.0)
-    
-    # Color the header
-    for j, col in enumerate(columns):
-        table[(0, j)].set_facecolor('#2C3E50')
-        table[(0, j)].set_text_props(color='white', fontweight='bold')
-    
-    # Color rows based on FST level
-    level_colors = {
-        'Highest': '#E74C3C',      # Red
-        'High': '#E67E22',         # Orange
-        'Moderate-High': '#F39C12', # Yellow-Orange
-        'Moderate': '#F1C40F',     # Yellow
-        'Very Low': '#2ECC71'      # Green
-    }
-    
-    for i, row in df.iterrows():
-        color = level_colors.get(row['Level'], 'white')
-        for j in range(len(columns)):
-            table[(i+1, j)].set_facecolor(color)
-            table[(i+1, j)].set_alpha(0.3)
-    
-    # =========================================================================
-    # Subplot 2: Bar chart
-    # =========================================================================
-    ax2 = fig.add_subplot(2, 1, 2)
-    
-    # Sort by FST value
-    df_sorted = df.sort_values('FST', ascending=True)
-    
-    # Create horizontal bar chart
-    colors = [level_colors.get(level, 'gray') for level in df_sorted['Level']]
-    bars = ax2.barh(df_sorted['Comparison'], df_sorted['FST'], color=colors, edgecolor='black', alpha=0.8)
-    
-    # Add value labels on bars
-    for bar, fst in zip(bars, df_sorted['FST']):
-        width = bar.get_width()
-        ax2.text(width + 0.005, bar.get_y() + bar.get_height()/2, 
-                 f'{fst:.4f}', ha='left', va='center', fontsize=10, fontweight='bold')
-    
-    # Add reference lines for Wright's scale
-    ax2.axvline(x=0.05, color='gray', linestyle='--', linewidth=1, alpha=0.7)
-    ax2.axvline(x=0.15, color='gray', linestyle='--', linewidth=1, alpha=0.7)
-    ax2.axvline(x=0.25, color='gray', linestyle='--', linewidth=1, alpha=0.7)
-    
-    # Add annotations for Wright's scale
-    ax2.text(0.025, -0.7, 'Little\n(<0.05)', ha='center', fontsize=8, color='gray')
-    ax2.text(0.10, -0.7, 'Moderate\n(0.05-0.15)', ha='center', fontsize=8, color='gray')
-    ax2.text(0.20, -0.7, 'Great\n(0.15-0.25)', ha='center', fontsize=8, color='gray')
-    
-    ax2.set_xlabel('Weighted FST', fontsize=12, fontweight='bold')
-    ax2.set_title('FST Values by Population Comparison\n(Wright\'s Scale Reference Lines)', fontsize=12, fontweight='bold')
-    ax2.set_xlim(0, 0.25)
-    
-    # Add legend
-    legend_patches = [
-        mpatches.Patch(color='#E74C3C', alpha=0.8, label='Highest (>0.15)'),
-        mpatches.Patch(color='#E67E22', alpha=0.8, label='High (0.15)'),
-        mpatches.Patch(color='#F39C12', alpha=0.8, label='Moderate-High (0.10-0.15)'),
-        mpatches.Patch(color='#F1C40F', alpha=0.8, label='Moderate (0.05-0.10)'),
-        mpatches.Patch(color='#2ECC71', alpha=0.8, label='Very Low (<0.05)')
-    ]
-    ax2.legend(handles=legend_patches, loc='lower right', fontsize=8, title='Differentiation Level')
-    
-    plt.tight_layout()
-    plt.savefig('results/pairwise_fst_table.png', dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close()
-    
-    print("FST table figure saved to: results/pairwise_fst_table.png")
+warnings.filterwarnings('ignore')
+
+# =============================================================================
+# Configuration
+# =============================================================================
+RESULTS_DIR = Path("results")
+FIGURES_DIR = RESULTS_DIR / "figures"
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+# Input files (generated by run_analysis.sh)
+PAIRWISE_SUPER_TSV = RESULTS_DIR / "chr22_fst_pairwise_superpop.tsv"
+PAIRWISE_SUBPOP_TSV = RESULTS_DIR / "chr22_fst_pairwise_subpop.tsv"
+CLEAN_PANEL = RESULTS_DIR / "panel_cleaned.tsv"
+
+# Super-population display order (geographic east-to-west)
+SUPER_POP_ORDER = ["AFR", "EUR", "SAS", "EAS", "AMR"]
+
+# Color scheme for super-populations
+SUPER_POP_COLORS = {
+    "AFR": "#E41A1C",  # Red
+    "EUR": "#377EB8",  # Blue
+    "SAS": "#4DAF4A",  # Green
+    "EAS": "#FF7F00",  # Orange
+    "AMR": "#984EA3",  # Purple
+}
 
 
-def create_fst_heatmap():
-    """Create a heatmap showing pairwise FST values."""
+# =============================================================================
+# Data Loading Functions
+# =============================================================================
+def load_pairwise_fst(filepath: Path, level: str = "super") -> pd.DataFrame:
+    """Load pairwise FST results from TSV file."""
+    if not filepath.exists():
+        print(f"ERROR: FST file not found: {filepath}")
+        sys.exit(1)
     
-    # Define populations and their super populations
-    pops = ['YRI', 'CEU', 'GBR', 'CHB', 'GIH', 'MXL']
-    super_pops = ['AFR', 'EUR', 'EUR', 'EAS', 'SAS', 'AMR']
+    df = pd.read_csv(filepath, sep="\t")
+    print(f"Loaded {len(df)} pairwise FST values from {filepath.name}")
     
-    # FST matrix (symmetric, diagonal = 0)
-    # Values from our calculations + estimates for missing pairs
-    fst_matrix = np.array([
-        [0.000, 0.154, 0.155, 0.194, 0.130, 0.120],  # YRI
-        [0.154, 0.000, 0.000, 0.113, 0.037, 0.040],  # CEU
-        [0.155, 0.000, 0.000, 0.114, 0.038, 0.041],  # GBR
-        [0.194, 0.113, 0.114, 0.000, 0.090, 0.081],  # CHB
-        [0.130, 0.037, 0.038, 0.090, 0.000, 0.060],  # GIH
-        [0.120, 0.040, 0.041, 0.081, 0.060, 0.000],  # MXL
-    ])
+    # Validate columns
+    if level == "super":
+        required_cols = ["pop1", "pop2", "weighted_fst"]
+    else:
+        required_cols = ["pop1", "pop2", "super_pop1", "super_pop2", "weighted_fst"]
     
-    # Create labels with super population
-    labels = [f"{pop}\n({sp})" for pop, sp in zip(pops, super_pops)]
+    missing = set(required_cols) - set(df.columns)
+    if missing:
+        print(f"ERROR: Missing columns: {missing}")
+        print(f"Available columns: {list(df.columns)}")
+        sys.exit(1)
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(10, 8))
+    return df
+
+
+def load_panel() -> pd.DataFrame:
+    """Load cleaned panel metadata."""
+    if not CLEAN_PANEL.exists():
+        print(f"ERROR: Panel file not found: {CLEAN_PANEL}")
+        sys.exit(1)
     
-    # Create heatmap
-    mask = np.triu(np.ones_like(fst_matrix, dtype=bool), k=1)  # Upper triangle mask
+    df = pd.read_csv(CLEAN_PANEL, sep="\t")
+    print(f"Loaded panel with {len(df)} samples")
+    return df
+
+
+def build_fst_matrix(df: pd.DataFrame, populations: list) -> pd.DataFrame:
+    """Convert pairwise FST dataframe to symmetric matrix."""
+    n = len(populations)
+    matrix = pd.DataFrame(np.zeros((n, n)), index=populations, columns=populations)
     
+    for _, row in df.iterrows():
+        p1, p2 = row["pop1"], row["pop2"]
+        fst = row["weighted_fst"]
+        
+        if pd.isna(fst) or fst == "NA":
+            fst = 0.0
+        else:
+            fst = float(fst)
+        
+        if p1 in populations and p2 in populations:
+            matrix.loc[p1, p2] = fst
+            matrix.loc[p2, p1] = fst  # Symmetric
+    
+    return matrix
+
+
+# =============================================================================
+# PBS Calculation
+# =============================================================================
+def fst_to_branch_length(fst: float) -> float:
+    """
+    Convert FST to branch length using Cavalli-Sforza transformation.
+    T = -log(1 - FST)
+    """
+    if pd.isna(fst) or fst >= 1.0:
+        return np.nan
+    if fst <= 0:
+        return 0.0
+    return -np.log(1 - fst)
+
+
+def calculate_pbs(fst_ab: float, fst_ac: float, fst_bc: float) -> float:
+    """
+    Calculate Population Branch Statistic (PBS) for population A.
+    
+    PBS_A = (T_AB + T_AC - T_BC) / 2
+    
+    Where T_XY = -log(1 - FST_XY)
+    
+    High PBS indicates population-specific differentiation (potential positive selection).
+    
+    Reference: Yi et al. 2010, Science 329:75-78
+    """
+    t_ab = fst_to_branch_length(fst_ab)
+    t_ac = fst_to_branch_length(fst_ac)
+    t_bc = fst_to_branch_length(fst_bc)
+    
+    if any(pd.isna([t_ab, t_ac, t_bc])):
+        return np.nan
+    
+    pbs = (t_ab + t_ac - t_bc) / 2
+    return max(0, pbs)  # PBS should be non-negative
+
+
+def compute_pbs_all_triplets(fst_matrix: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute PBS for all population triplet combinations.
+    
+    Returns a DataFrame with PBS values for each population in each triplet.
+    """
+    populations = list(fst_matrix.index)
+    results = []
+    
+    for triplet in combinations(populations, 3):
+        pop_a, pop_b, pop_c = triplet
+        
+        fst_ab = float(fst_matrix.loc[pop_a, pop_b])  # type: ignore[arg-type]
+        fst_ac = float(fst_matrix.loc[pop_a, pop_c])  # type: ignore[arg-type]
+        fst_bc = float(fst_matrix.loc[pop_b, pop_c])  # type: ignore[arg-type]
+        
+        pbs_a = calculate_pbs(fst_ab, fst_ac, fst_bc)
+        pbs_b = calculate_pbs(fst_ab, fst_bc, fst_ac)
+        pbs_c = calculate_pbs(fst_ac, fst_bc, fst_ab)
+        
+        results.append({
+            "triplet": f"{pop_a}-{pop_b}-{pop_c}",
+            "pop_A": pop_a, "pop_B": pop_b, "pop_C": pop_c,
+            "FST_AB": fst_ab, "FST_AC": fst_ac, "FST_BC": fst_bc,
+            "PBS_A": pbs_a, "PBS_B": pbs_b, "PBS_C": pbs_c
+        })
+    
+    return pd.DataFrame(results)
+
+
+def compute_mean_pbs_per_population(pbs_df: pd.DataFrame) -> pd.DataFrame:
+    """Calculate mean PBS for each population across all triplets."""
+    populations = set(pbs_df["pop_A"]) | set(pbs_df["pop_B"]) | set(pbs_df["pop_C"])
+    
+    results = []
+    for pop in populations:
+        # Get all PBS values where this population is the focal population
+        pbs_values = []
+        
+        mask_a = pbs_df["pop_A"] == pop
+        mask_b = pbs_df["pop_B"] == pop
+        mask_c = pbs_df["pop_C"] == pop
+        
+        pbs_values.extend(pbs_df.loc[mask_a, "PBS_A"].dropna().tolist())
+        pbs_values.extend(pbs_df.loc[mask_b, "PBS_B"].dropna().tolist())
+        pbs_values.extend(pbs_df.loc[mask_c, "PBS_C"].dropna().tolist())
+        
+        if pbs_values:
+            results.append({
+                "population": pop,
+                "mean_pbs": np.mean(pbs_values),
+                "max_pbs": np.max(pbs_values),
+                "std_pbs": np.std(pbs_values),
+                "n_triplets": len(pbs_values)
+            })
+    
+    return pd.DataFrame(results).sort_values("mean_pbs", ascending=False)
+
+
+# =============================================================================
+# Visualization Functions
+# =============================================================================
+def plot_fst_heatmap(
+    fst_matrix: pd.DataFrame,
+    title: str,
+    output_file: Path,
+    figsize: tuple = (10, 8),
+    annot: bool = True,
+    cmap: str = "YlOrRd",
+    cluster: bool = False
+):
+    """
+    Generate FST heatmap with optional hierarchical clustering.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Apply clustering if requested
+    if cluster and len(fst_matrix) > 2:
+        # Use linkage for hierarchical clustering
+        linkage_matrix = linkage(fst_matrix.values, method='average')
+        dendro = dendrogram(linkage_matrix, no_plot=True)
+        order = dendro['leaves']
+        fst_matrix = fst_matrix.iloc[order, order]
+    
+    # Create mask for diagonal
+    mask = np.eye(len(fst_matrix), dtype=bool)
+    
+    # Plot heatmap
     sns.heatmap(
         fst_matrix,
-        annot=True,
-        fmt='.3f',
-        cmap='YlOrRd',
-        xticklabels=labels,
-        yticklabels=labels,
         mask=mask,
+        annot=annot,
+        fmt=".4f" if annot else "",
+        cmap=cmap,
+        vmin=0,
+        vmax=fst_matrix.values[~mask].max() * 1.1 if fst_matrix.values[~mask].max() > 0 else 0.3,
         square=True,
         linewidths=0.5,
-        cbar_kws={'label': 'FST', 'shrink': 0.8},
-        ax=ax,
-        vmin=0,
-        vmax=0.2
+        cbar_kws={"label": "Weighted FST", "shrink": 0.8},
+        ax=ax
     )
     
-    ax.set_title('Pairwise FST Heatmap\n1000 Genomes Project - Chromosome 22', 
-                 fontsize=14, fontweight='bold', pad=20)
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
     
-    # Add interpretation text
-    interpretation = (
-        "Interpretation:\n"
-        "• Red/Orange = High differentiation\n"
-        "• Yellow = Moderate differentiation\n"
-        "• Light = Low differentiation"
-    )
-    ax.text(1.35, 0.5, interpretation, transform=ax.transAxes, fontsize=9,
-            verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    # Rotate labels for readability
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
     
     plt.tight_layout()
-    plt.savefig('results/pairwise_fst_heatmap.png', dpi=300, bbox_inches='tight', facecolor='white')
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
+    print(f"Saved: {output_file}")
+
+
+def plot_fst_heatmap_with_superpop_annotation(
+    fst_matrix: pd.DataFrame,
+    panel: pd.DataFrame,
+    title: str,
+    output_file: Path,
+    figsize: tuple = (16, 14)
+):
+    """
+    Generate sub-population FST heatmap with super-population color annotations.
+    """
+    # Create pop -> super_pop mapping
+    pop_to_super = panel.drop_duplicates("pop").set_index("pop")["super_pop"].to_dict()
     
-    print("FST heatmap saved to: results/pairwise_fst_heatmap.png")
+    # Order populations by super-population
+    ordered_pops = []
+    for sp in SUPER_POP_ORDER:
+        pops_in_sp = [p for p in fst_matrix.index if pop_to_super.get(p) == sp]
+        ordered_pops.extend(sorted(pops_in_sp))
+    
+    # Add any missing populations
+    for p in fst_matrix.index:
+        if p not in ordered_pops:
+            ordered_pops.append(p)
+    
+    # Reorder matrix
+    fst_matrix = fst_matrix.loc[ordered_pops, ordered_pops]
+    
+    # Create figure with colorbar space
+    fig = plt.figure(figsize=figsize)
+    
+    # Create gridspec for main heatmap and color bars
+    gs = fig.add_gridspec(
+        2, 2,
+        width_ratios=[0.03, 1],
+        height_ratios=[1, 0.03],
+        wspace=0.02,
+        hspace=0.02
+    )
+    
+    ax_main = fig.add_subplot(gs[0, 1])
+    ax_left = fig.add_subplot(gs[0, 0])
+    ax_bottom = fig.add_subplot(gs[1, 1])
+    
+    # Create mask for diagonal
+    mask = np.eye(len(fst_matrix), dtype=bool)
+    
+    # Plot main heatmap
+    sns.heatmap(
+        fst_matrix,
+        mask=mask,
+        annot=False,
+        cmap="YlOrRd",
+        vmin=0,
+        vmax=fst_matrix.values[~mask].max() * 1.1,
+        square=True,
+        linewidths=0.1,
+        cbar_kws={"label": "Weighted FST", "shrink": 0.6, "pad": 0.02},
+        ax=ax_main
+    )
+    
+    ax_main.set_title(title, fontsize=14, fontweight='bold', pad=20)
+    ax_main.set_xticklabels(ax_main.get_xticklabels(), rotation=90, fontsize=8)
+    ax_main.set_yticklabels(ax_main.get_yticklabels(), rotation=0, fontsize=8)
+    
+    # Add super-population color bars
+    super_pop_colors_arr = [SUPER_POP_COLORS.get(pop_to_super.get(p, ""), "#CCCCCC") 
+                           for p in ordered_pops]
+    
+    # Left color bar (rows)
+    for i, color in enumerate(super_pop_colors_arr):
+        ax_left.add_patch(plt.Rectangle((0, i), 1, 1, facecolor=color, edgecolor='white', lw=0.5))
+    ax_left.set_xlim(0, 1)
+    ax_left.set_ylim(0, len(ordered_pops))
+    ax_left.invert_yaxis()
+    ax_left.axis('off')
+    
+    # Bottom color bar (columns)
+    for i, color in enumerate(super_pop_colors_arr):
+        ax_bottom.add_patch(plt.Rectangle((i, 0), 1, 1, facecolor=color, edgecolor='white', lw=0.5))
+    ax_bottom.set_xlim(0, len(ordered_pops))
+    ax_bottom.set_ylim(0, 1)
+    ax_bottom.axis('off')
+    
+    # Add legend for super-populations
+    from matplotlib.patches import Patch
+    legend_patches = [Patch(facecolor=color, label=sp) 
+                     for sp, color in SUPER_POP_COLORS.items()]
+    fig.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(0.98, 0.98),
+              title="Super-Population", frameon=True, fontsize=9)
+    
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_file}")
 
 
-if __name__ == '__main__':
-    create_fst_table_figure()
-    create_fst_heatmap()
-    print("\nAll FST visualizations complete!")
+def plot_pbs_barplot(
+    pbs_summary: pd.DataFrame,
+    panel: pd.DataFrame,
+    title: str,
+    output_file: Path,
+    figsize: tuple = (12, 6)
+):
+    """Generate bar plot of mean PBS values per population."""
+    # Add super-population info
+    pop_to_super = panel.drop_duplicates("pop").set_index("pop")["super_pop"].to_dict()
+    pbs_summary["super_pop"] = pbs_summary["population"].map(pop_to_super)
+    
+    # Sort by super-population then by mean PBS
+    pbs_summary["sp_order"] = pbs_summary["super_pop"].map(
+        {sp: i for i, sp in enumerate(SUPER_POP_ORDER)}
+    )
+    pbs_summary = pbs_summary.sort_values(["sp_order", "mean_pbs"], ascending=[True, False])
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    colors = [SUPER_POP_COLORS.get(sp, "#CCCCCC") for sp in pbs_summary["super_pop"]]
+    
+    bars = ax.bar(
+        range(len(pbs_summary)),
+        pbs_summary["mean_pbs"],
+        yerr=pbs_summary["std_pbs"],
+        color=colors,
+        edgecolor='black',
+        linewidth=0.5,
+        capsize=2
+    )
+    
+    ax.set_xticks(range(len(pbs_summary)))
+    ax.set_xticklabels(pbs_summary["population"], rotation=45, ha='right', fontsize=9)
+    ax.set_ylabel("Mean PBS", fontsize=11)
+    ax.set_xlabel("Population", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight='bold')
+    
+    # Add reference line
+    ax.axhline(y=pbs_summary["mean_pbs"].mean(), color='red', linestyle='--', 
+               alpha=0.7, label=f'Global mean: {pbs_summary["mean_pbs"].mean():.4f}')
+    
+    # Legend
+    from matplotlib.patches import Patch
+    legend_patches = [Patch(facecolor=color, label=sp) 
+                     for sp, color in SUPER_POP_COLORS.items()]
+    legend_patches.append(plt.Line2D([0], [0], color='red', linestyle='--', label='Global mean'))
+    ax.legend(handles=legend_patches, loc='upper right', fontsize=8)
+    
+    ax.set_xlim(-0.5, len(pbs_summary) - 0.5)
+    ax.grid(axis='y', alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_file}")
+
+
+def plot_fst_distribution(
+    fst_df: pd.DataFrame,
+    title: str,
+    output_file: Path,
+    level: str = "super"
+):
+    """Plot distribution of pairwise FST values."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    fst_values = fst_df["weighted_fst"].dropna()
+    fst_values = fst_values[fst_values != "NA"].astype(float)
+    
+    # Histogram
+    axes[0].hist(fst_values, bins=30, color='steelblue', edgecolor='black', alpha=0.7)
+    axes[0].axvline(fst_values.mean(), color='red', linestyle='--', 
+                    label=f'Mean: {fst_values.mean():.4f}')
+    axes[0].axvline(fst_values.median(), color='green', linestyle=':', 
+                    label=f'Median: {fst_values.median():.4f}')
+    axes[0].set_xlabel("Weighted FST", fontsize=11)
+    axes[0].set_ylabel("Frequency", fontsize=11)
+    axes[0].set_title(f"Distribution of Pairwise FST ({level})", fontsize=12)
+    axes[0].legend(fontsize=9)
+    axes[0].grid(alpha=0.3)
+    
+    # Box plot by comparison type (if sub-population level)
+    if level == "subpop" and "super_pop1" in fst_df.columns:
+        fst_df_clean = fst_df.copy()
+        fst_df_clean["weighted_fst"] = pd.to_numeric(fst_df_clean["weighted_fst"], errors='coerce')
+        fst_df_clean = fst_df_clean.dropna(subset=["weighted_fst"])
+        
+        # Categorize comparisons
+        fst_df_clean["comparison_type"] = fst_df_clean.apply(
+            lambda x: "Within super-pop" if x["super_pop1"] == x["super_pop2"] else "Between super-pop",
+            axis=1
+        )
+        
+        sns.boxplot(
+            data=fst_df_clean,
+            x="comparison_type",
+            y="weighted_fst",
+            palette=["lightgreen", "lightcoral"],
+            ax=axes[1]
+        )
+        axes[1].set_xlabel("Comparison Type", fontsize=11)
+        axes[1].set_ylabel("Weighted FST", fontsize=11)
+        axes[1].set_title("FST by Comparison Type", fontsize=12)
+    else:
+        # Simple violin plot for super-population level
+        sns.violinplot(y=fst_values, ax=axes[1], color='steelblue')
+        axes[1].set_ylabel("Weighted FST", fontsize=11)
+        axes[1].set_title("FST Distribution", fontsize=12)
+    
+    axes[1].grid(alpha=0.3)
+    
+    plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_file}")
+
+
+def generate_fst_table(fst_matrix: pd.DataFrame, output_file: Path):
+    """Save FST matrix as formatted CSV/TSV."""
+    fst_matrix.to_csv(output_file, sep="\t", float_format="%.6f")
+    print(f"Saved: {output_file}")
+
+
+# =============================================================================
+# Main Execution
+# =============================================================================
+def main():
+    print("=" * 70)
+    print("FST Analysis & Visualization Suite")
+    print("=" * 70)
+    print()
+    
+    # Load data
+    print("Loading data...")
+    panel = load_panel()
+    
+    # =========================================================================
+    # 1. Super-population FST Analysis
+    # =========================================================================
+    print("\n" + "=" * 50)
+    print("1. Super-Population FST Analysis")
+    print("=" * 50)
+    
+    if PAIRWISE_SUPER_TSV.exists():
+        fst_super_df = load_pairwise_fst(PAIRWISE_SUPER_TSV, level="super")
+        
+        # Build FST matrix
+        super_pops = [sp for sp in SUPER_POP_ORDER if sp in 
+                      set(fst_super_df["pop1"]) | set(fst_super_df["pop2"])]
+        fst_super_matrix = build_fst_matrix(fst_super_df, super_pops)
+        
+        # Generate outputs
+        plot_fst_heatmap(
+            fst_super_matrix,
+            "Pairwise FST Between Super-Populations (1000 Genomes Chr22)",
+            FIGURES_DIR / "fst_heatmap_superpop.png",
+            figsize=(8, 7),
+            annot=True
+        )
+        
+        generate_fst_table(
+            fst_super_matrix,
+            RESULTS_DIR / "fst_matrix_superpop.tsv"
+        )
+        
+        plot_fst_distribution(
+            fst_super_df,
+            "Super-Population FST Distribution",
+            FIGURES_DIR / "fst_distribution_superpop.png",
+            level="super"
+        )
+        
+        # PBS Analysis for super-populations
+        print("\nCalculating PBS for super-populations...")
+        pbs_super_df = compute_pbs_all_triplets(fst_super_matrix)
+        pbs_super_summary = compute_mean_pbs_per_population(pbs_super_df)
+        
+        pbs_super_df.to_csv(RESULTS_DIR / "pbs_triplets_superpop.tsv", sep="\t", index=False)
+        pbs_super_summary.to_csv(RESULTS_DIR / "pbs_summary_superpop.tsv", sep="\t", index=False)
+        
+        print("\nSuper-population PBS Summary:")
+        print(pbs_super_summary.to_string(index=False))
+        
+    else:
+        print(f"WARNING: {PAIRWISE_SUPER_TSV} not found, skipping super-population analysis")
+    
+    # =========================================================================
+    # 2. Sub-population FST Analysis
+    # =========================================================================
+    print("\n" + "=" * 50)
+    print("2. Sub-Population FST Analysis (26 populations)")
+    print("=" * 50)
+    
+    if PAIRWISE_SUBPOP_TSV.exists():
+        fst_subpop_df = load_pairwise_fst(PAIRWISE_SUBPOP_TSV, level="subpop")
+        
+        # Get all unique populations
+        all_pops = sorted(set(fst_subpop_df["pop1"]) | set(fst_subpop_df["pop2"]))
+        print(f"Found {len(all_pops)} sub-populations: {all_pops}")
+        
+        # Build FST matrix
+        fst_subpop_matrix = build_fst_matrix(fst_subpop_df, all_pops)
+        
+        # Generate outputs
+        plot_fst_heatmap_with_superpop_annotation(
+            fst_subpop_matrix,
+            panel,
+            "Pairwise FST Between 26 Sub-Populations (1000 Genomes Chr22)",
+            FIGURES_DIR / "fst_heatmap_subpop.png",
+            figsize=(16, 14)
+        )
+        
+        # Clustered heatmap
+        plot_fst_heatmap(
+            fst_subpop_matrix,
+            "Pairwise FST (Hierarchically Clustered)",
+            FIGURES_DIR / "fst_heatmap_subpop_clustered.png",
+            figsize=(14, 12),
+            annot=False,
+            cluster=True
+        )
+        
+        generate_fst_table(
+            fst_subpop_matrix,
+            RESULTS_DIR / "fst_matrix_subpop.tsv"
+        )
+        
+        plot_fst_distribution(
+            fst_subpop_df,
+            "Sub-Population FST Distribution",
+            FIGURES_DIR / "fst_distribution_subpop.png",
+            level="subpop"
+        )
+        
+        # PBS Analysis for sub-populations
+        print("\nCalculating PBS for sub-populations (this may take a moment)...")
+        pbs_subpop_df = compute_pbs_all_triplets(fst_subpop_matrix)
+        pbs_subpop_summary = compute_mean_pbs_per_population(pbs_subpop_df)
+        
+        pbs_subpop_df.to_csv(RESULTS_DIR / "pbs_triplets_subpop.tsv", sep="\t", index=False)
+        pbs_subpop_summary.to_csv(RESULTS_DIR / "pbs_summary_subpop.tsv", sep="\t", index=False)
+        
+        print(f"\nTop 10 populations by mean PBS:")
+        print(pbs_subpop_summary.head(10).to_string(index=False))
+        
+        # PBS bar plot
+        plot_pbs_barplot(
+            pbs_subpop_summary,
+            panel,
+            "Population Branch Statistic (PBS) by Sub-Population",
+            FIGURES_DIR / "pbs_barplot_subpop.png"
+        )
+        
+    else:
+        print(f"WARNING: {PAIRWISE_SUBPOP_TSV} not found, skipping sub-population analysis")
+    
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    print("\n" + "=" * 70)
+    print("Analysis Complete!")
+    print("=" * 70)
+    print(f"\nOutput directory: {FIGURES_DIR}")
+    print("\nGenerated files:")
+    for f in sorted(FIGURES_DIR.glob("*.png")):
+        print(f"  • {f.name}")
+    for f in sorted(RESULTS_DIR.glob("*.tsv")):
+        if "fst" in f.name.lower() or "pbs" in f.name.lower():
+            print(f"  • {f.name}")
+
+
+if __name__ == "__main__":
+    main()
